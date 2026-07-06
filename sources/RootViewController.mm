@@ -20,6 +20,7 @@
     
     NSURL *selectedFileUrl;
     NSString *workflowYamlContent;
+    UIImageView *repoArrowImageView; // ตัวแปรสำหรับเก็บป้ายลูกศรหมุนของช่อง Repo
 }
 @property (nonatomic, strong) DODoubleHelixIndicator *loadingIndicator;
 @end
@@ -37,6 +38,15 @@
     [self setupNativeUI];
     [self setupLoadingIndicator];
     [self loadSavedData];
+    
+    // ลงทะเบียนสิทธิ์การตรวจจับการเคาะหน้าจอเพื่อสลับเก็บแป้นพิมพ์ภายนอก
+    UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboardFromView)];
+    tapGesture.cancelsTouchesInView = NO;
+    [self.view addGestureRecognizer:tapGesture];
+}
+
+- (void)dismissKeyboardFromView {
+    [self.view endEditing:YES];
 }
 
 - (void)setupWorkflowString {
@@ -109,6 +119,32 @@
     repoField = [self createTextFieldWithPlaceholder:@"Repository Name" yPos:190 toView:cardView];
     branchField = [self createTextFieldWithPlaceholder:@"Branch (default: main)" yPos:250 toView:cardView];
     
+    // ตั้งค่าเพิ่มรูปไอคอนลูกศรชี้ขวา/ลง ด้านท้ายของช่องกรอกข้อมูล Repo
+    UIView *rightContainerView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 32, 40)];
+    repoArrowImageView = [[UIImageView alloc] initWithFrame:CGRectMake(6, 14, 12, 12)];
+    repoArrowImageView.tintColor = [UIColor grayColor];
+    
+    if (@available(iOS 13.0, *)) {
+        repoArrowImageView.image = [[UIImage systemImageNamed:@"chevron.right"] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    } else {
+        // Fallback วาดสัญลักษณ์ลูกศรหากรันบนระบบเก่ากว่า iOS 13
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(12, 12), NO, 0.0);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGContextSetStrokeColorWithColor(context, [UIColor grayColor].CGColor);
+        CGContextSetLineWidth(context, 2.0);
+        CGContextMoveToPoint(context, 3, 1);
+        CGContextAddLineToPoint(context, 9, 6);
+        CGContextAddLineToPoint(context, 3, 11);
+        CGContextStrokePath(context);
+        UIImage *arrowImg = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        repoArrowImageView.image = arrowImg;
+    }
+    
+    [rightContainerView addSubview:repoArrowImageView];
+    repoField.rightView = rightContainerView;
+    repoField.rightViewMode = UITextFieldViewModeAlways;
+    
     // ช่องแสดงข้อมูลไฟล์ย่อยที่เลือก
     fileInfoLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 310, cardView.frame.size.width - 40, 70)];
     fileInfoLabel.backgroundColor = [UIColor colorWithRed:22.0/255.0 green:27.0/255.0 blue:34.0/255.0 alpha:1.0];
@@ -142,6 +178,7 @@
     tf.textColor = [UIColor whiteColor];
     tf.font = [UIFont systemFontOfSize:14];
     tf.delegate = self;
+    tf.returnKeyType = UIReturnKeyNext; // เปลี่ยนปุ่มรีเทิร์นบนแป้นพิมพ์ให้แสดงคำว่า ถัดไป (Next)
     
     // สร้าง Padding ด้านซ้ายของกล่องข้อความ
     UIView *paddingView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, 20)];
@@ -158,6 +195,39 @@
     self.loadingIndicator.center = self.view.center;
     self.loadingIndicator.hidden = YES;
     [self.view addSubview:self.loadingIndicator];
+}
+
+#pragma mark - UITextFieldDelegate (การสลับฟิลด์ด้วยรีเทิร์นและการหมุนของ Arrow)
+
+- (void)textFieldDidBeginEditing:(UITextField *)textField {
+    if (textField == repoField) {
+        [UIView animateWithDuration:0.25 animations:^{
+            self->repoArrowImageView.transform = CGAffineTransformMakeRotation(M_PI_2); // หมุนลูกศรลงล่าง 90 ถึง 180 องศาตามสถานะเปิดพิมพ์
+        }];
+    }
+}
+
+- (void)textFieldDidEndEditing:(UITextField *)textField {
+    if (textField == repoField) {
+        [UIView animateWithDuration:0.25 animations:^{
+            self->repoArrowImageView.transform = CGAffineTransformIdentity; // หมุนกลับสู่ค่าเริ่มต้นเมื่อหลุดโฟกัส
+        }];
+    }
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    if (textField == usernameField) {
+        [tokenField becomeFirstResponder];
+    } else if (textField == tokenField) {
+        [repoField becomeFirstResponder];
+    } else if (textField == repoField) {
+        [branchField becomeFirstResponder];
+    } else if (textField == branchField) {
+        [textField resignFirstResponder]; // ช่องสุดท้ายให้สั่งซ่อนปิดหน้าต่างคีย์บอร์ดลงมาทันที
+    } else {
+        [textField resignFirstResponder];
+    }
+    return YES;
 }
 
 #pragma mark - Data Persistence
@@ -386,11 +456,6 @@
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"ตกลง" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (BOOL)textFieldShouldReturn:(UITextField *)textField {
-    [textField resignFirstResponder];
-    return YES;
 }
 
 @end
