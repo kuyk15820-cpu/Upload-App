@@ -129,7 +129,7 @@
     [uploadButton setTitle:@"เลือกไฟล์ .zip เพื่อเริ่มอัปโหลด" forState:UIControlStateNormal];
     [uploadButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     uploadButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-    [uploadButton addTarget:self action:@selector(selectFileBtnPressed) borderForAction:UIControlEventTouchUpInside];
+    [uploadButton addTarget:self action:@selector(selectFileBtnPressed) forControlEvents:UIControlEventTouchUpInside];
     [cardView addSubview:uploadButton];
 }
 
@@ -384,7 +384,7 @@
 #pragma mark - Helper UI Elements
 - (void)showAlert:(NSString *)title message:(NSString *)message {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertController actionWithTitle:@"ตกลง" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"ตกลง" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
