@@ -1,0 +1,9 @@
+Package: com.apple.the-genesis.build
+Name: app
+Depends: apple.uikit
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: none
+Maintainer: @K02
+Author: @K02
+Section: Utilities
