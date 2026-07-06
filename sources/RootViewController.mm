@@ -10,20 +10,17 @@
 #define TEXT_COLOR [UIColor colorWithRed:201.0/255.0 green:209.0/255.0 blue:217.0/255.0 alpha:1.0]
 #define ACCENT_GREEN [UIColor colorWithRed:35.0/255.0 green:134.0/255.0 blue:54.0/255.0 alpha:1.0]
 
-@interface RootViewController () <UIDocumentPickerDelegate, UITextFieldDelegate, UIPickerViewDelegate, UIPickerViewDataSource> {
+@interface RootViewController () <UIDocumentPickerDelegate, UITextFieldDelegate> {
     UITextField *usernameField;
     UITextField *tokenField;
     UITextField *repoField;
     UITextField *branchField;
+    UIButton *arrowButton; // <-- เพิ่มปุ่ม Arrow สำหรับกดส่งข้อมูลด่วน
     UIButton *uploadButton;
     UILabel *fileInfoLabel;
     
     NSURL *selectedFileUrl;
     NSString *workflowYamlContent;
-    UIImageView *repoArrowImageView; // ตัวแปรสำหรับเก็บป้ายลูกศรหมุนของช่อง Repo
-    
-    UIPickerView *repoPickerView;    // ตัวเลือกหมุนสำหรับรายชื่อ Repo
-    NSMutableArray *repoListArray;   // อาร์เรย์เก็บรายชื่อ Repo ที่ดึงมาจาก GitHub API
 }
 @property (nonatomic, strong) DODoubleHelixIndicator *loadingIndicator;
 @end
@@ -34,22 +31,13 @@
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskPortrait; }
 
 - (void)viewDidLoad {
-    [super viewDidLoad];
+    [super __viewDidLoad];
     self.view.backgroundColor = BG_COLOR;
     
     [self setupWorkflowString];
     [self setupNativeUI];
     [self setupLoadingIndicator];
     [self loadSavedData];
-    
-    // ลงทะเบียนสิทธิ์การตรวจจับการเคาะหน้าจอเพื่อสลับเก็บแป้นพิมพ์ภายนอก
-    UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboardFromView)];
-    tapGesture.cancelsTouchesInView = NO;
-    [self.view addGestureRecognizer:tapGesture];
-}
-
-- (void)dismissKeyboardFromView {
-    [self.view endEditing:YES];
 }
 
 - (void)setupWorkflowString {
@@ -120,54 +108,40 @@
     tokenField.secureTextEntry = YES;
     
     repoField = [self createTextFieldWithPlaceholder:@"Repository Name" yPos:190 toView:cardView];
-    branchField = [self createTextFieldWithPlaceholder:@"Branch (default: main)" yPos:250 toView:cardView];
     
-    // ตั้งค่าเพิ่มรูปไอคอนลูกศรแบบ chevron.down ด้านท้ายของช่องกรอกข้อมูล Repo
-    UIView *rightContainerView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 32, 40)];
-    repoArrowImageView = [[UIImageView alloc] initWithFrame:CGRectMake(6, 14, 12, 12)];
-    repoArrowImageView.tintColor = [UIColor grayColor];
+    // ปรับแต่งแถว Branch: แบ่งพื้นที่ให้ Branch Field และปุ่ม Arrow อยู่ด้วยกัน
+    CGFloat fieldWidth = cardView.frame.size.width - 40; // ความกว้างปกติคือความกว้างการ์ดลบขอบซ้ายขวา 40
+    CGFloat arrowBtnWidth = 45;
+    CGFloat spacing = 10;
+    CGFloat customBranchWidth = fieldWidth - arrowBtnWidth - spacing;
     
-    if (@available(iOS 13.0, *)) {
-        repoArrowImageView.image = [[UIImage systemImageNamed:@"chevron.down"] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-    } else {
-        // Fallback วาดสัญลักษณ์ลูกศรชี้ลงล่างหากรันบนระบบเก่ากว่า iOS 13
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(12, 12), NO, 0.0);
-        CGContextRef context = UIGraphicsGetCurrentContext();
-        CGContextSetStrokeColorWithColor(context, [UIColor grayColor].CGColor);
-        CGContextSetLineWidth(context, 2.0);
-        CGContextMoveToPoint(context, 1, 3);
-        CGContextAddLineToPoint(context, 6, 9);
-        CGContextAddLineToPoint(context, 11, 3);
-        CGContextStrokePath(context);
-        UIImage *arrowImg = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        repoArrowImageView.image = arrowImg;
-    }
+    branchField = [[UITextField alloc] initWithFrame:CGRectMake(20, 250, customBranchWidth, 40)];
+    branchField.backgroundColor = [UIColor colorWithRed:33.0/255.0 green:38.0/255.0 blue:45.0/255.0 alpha:1.0];
+    branchField.layer.borderColor = BORDER_COLOR.CGColor;
+    branchField.layer.borderWidth = 1.0;
+    branchField.layer.cornerRadius = 8.0;
+    branchField.textColor = [UIColor whiteColor];
+    branchField.font = [UIFont systemFontOfSize:14];
+    branchField.delegate = self;
     
-    [rightContainerView addSubview:repoArrowImageView];
-    repoField.rightView = rightContainerView;
-    repoField.rightViewMode = UITextFieldViewModeAlways;
+    UIView *paddingView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, 20)];
+    branchField.leftView = paddingView;
+    branchField.leftViewMode = UITextFieldViewModeAlways;
+    branchField.attributedPlaceholder = [[NSAttributedString alloc] initWithString:@"Branch (default: main)" attributes:@{NSForegroundColorAttributeName: [UIColor grayColor]}];
+    [cardView addSubview:branchField];
     
-    // เตรียมระบบ UIPickerView สำหรับแสดงและเลือกรายชื่อคลังข้อมูล
-    repoListArray = [[NSMutableArray alloc] init];
-    repoPickerView = [[UIPickerView alloc] init];
-    repoPickerView.delegate = self;
-    repoPickerView.dataSource = self;
-    
-    // สร้างแถบเครื่องมือปิด/เลือกด้านบน Picker
-    UIToolbar *pickerToolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width, 40)];
-    pickerToolbar.barStyle = UIBarStyleBlack;
-    pickerToolbar.translucent = YES;
-    UIBarButtonItem *doneButton = [[UIBarButtonItem alloc] initWithTitle:@"เลือก" style:UIBarButtonItemStyleDone target:self action:@selector(dismissKeyboardFromView)];
-    UIBarButtonItem *flexibleSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-    [pickerToolbar setItems:@[flexibleSpace, doneButton]];
-    
-    repoField.inputView = repoPickerView;
-    repoField.inputAccessoryView = pickerToolbar;
-    
-    // ผูก Action ให้คอยตรวจจับการเปลี่ยนแปลงของ Username/Token เพื่อดึง Repo อัตโนมัติ
-    [usernameField addTarget:self action:@selector(fetchGitHubRepositoriesNative) forControlEvents:UIControlEventEditingChanged];
-    [tokenField addTarget:self action:@selector(fetchGitHubRepositoriesNative) forControlEvents:UIControlEventEditingChanged];
+    // สร้างปุ่ม Arrow (→) ไว้ข้างฟิลด์ Branch
+    arrowButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    arrowButton.frame = CGRectMake(20 + customBranchWidth + spacing, 250, arrowBtnWidth, 40);
+    arrowButton.backgroundColor = [UIColor colorWithRed:33.0/255.0 green:38.0/255.0 blue:45.0/255.0 alpha:1.0];
+    arrowButton.layer.borderColor = BORDER_COLOR.CGColor;
+    arrowButton.layer.borderWidth = 1.0;
+    arrowButton.layer.cornerRadius = 8.0;
+    [arrowButton setTitle:@"→" forState:UIControlStateNormal];
+    [arrowButton setTitleColor:ACCENT_GREEN forState:UIControlStateNormal]; // ใช้สีเขียว Accent ของ GitHub สวยๆ
+    arrowButton.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+    [arrowButton addTarget:self action:@selector(selectFileBtnPressed) forControlEvents:UIControlEventTouchUpInside];
+    [cardView addSubview:arrowButton];
     
     // ช่องแสดงข้อมูลไฟล์ย่อยที่เลือก
     fileInfoLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 310, cardView.frame.size.width - 40, 70)];
@@ -202,7 +176,6 @@
     tf.textColor = [UIColor whiteColor];
     tf.font = [UIFont systemFontOfSize:14];
     tf.delegate = self;
-    tf.returnKeyType = UIReturnKeyNext; // เปลี่ยนปุ่มรีเทิร์นบนแป้นพิมพ์ให้แสดงคำว่า ถัดไป (Next)
     
     // สร้าง Padding ด้านซ้ายของกล่องข้อความ
     UIView *paddingView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, 20)];
@@ -221,86 +194,6 @@
     [self.view addSubview:self.loadingIndicator];
 }
 
-#pragma mark - GitHub Repository Fetcher (ระบบดึงรายชื่อ Repo อัตโนมัติ)
-- (void)fetchGitHubRepositoriesNative {
-    NSString *user = usernameField.text;
-    NSString *token = tokenField.text;
-    if (user.length == 0 || token.length == 0) return;
-    
-    NSString *urlStr = @"https://api.github.com/user/repos?per_page=100&sort=updated";
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
-    [request setValue:[NSString stringWithFormat:@"token %@", token] forHTTPHeaderField:@"Authorization"];
-    [request setValue:@"application/vnd.github.v3+json" forHTTPHeaderField:@"Accept"];
-    
-    [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        if (data && !error) {
-            NSArray *repos = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-            if ([repos isKindOfClass:[NSArray class]]) {
-                [self->repoListArray removeAllObjects];
-                [self->repoListArray addObject:@"< สร้าง Repository ใหม่ >"];
-                for (NSDictionary *repoDict in repos) {
-                    NSString *name = repoDict[@"name"];
-                    if (name) [self->repoListArray addObject:name];
-                }
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [self->repoPickerView reloadAllComponents];
-                });
-            }
-        }
-    }] resume];
-}
-
-#pragma mark - UIPickerView DataSource & Delegate
-- (NSInteger)numberOfComponentsInPickerView:(UIPickerView *)pickerView { return 1; }
-- (NSInteger)pickerView:(UIPickerView *)pickerView numberOfRowsInComponent:(NSInteger)component { return repoListArray.count; }
-- (NSString *)pickerView:(UIPickerView *)pickerView titleForRow:(NSInteger)row forComponent:(NSInteger)component { return repoListArray[row]; }
-- (void)pickerView:(UIPickerView *)pickerView didSelectRow:(NSInteger)row inComponent:(NSInteger)component {
-    if (row < repoListArray.count) {
-        NSString *selected = repoListArray[row];
-        if ([selected isEqualToString:@"< สร้าง Repository ใหม่ >"]) {
-            repoField.inputView = nil; // อนุญาตให้แป้นพิมพ์ปกติขึ้นเพื่อพิมพ์สร้างชื่อใหม่
-            repoField.text = @"";
-            [repoField reloadInputViews];
-        } else {
-            repoField.text = selected;
-        }
-    }
-}
-
-#pragma mark - UITextFieldDelegate (การสลับฟิลด์ด้วยรีเทิร์นและการหมุนของ Arrow)
-
-- (void)textFieldDidBeginEditing:(UITextField *)textField {
-    if (textField == repoField) {
-        if (repoListArray.count <= 1) { [self fetchGitHubRepositoriesNative]; }
-        [UIView animateWithDuration:0.25 animations:^{
-            self->repoArrowImageView.transform = CGAffineTransformMakeRotation(M_PI); // หมุนลูกศรกลับหัวชี้ขึ้นบน 180 องศา (M_PI) เมื่อโฟกัสเปิดตัวเลือก
-        }];
-    }
-}
-
-- (void)textFieldDidEndEditing:(UITextField *)textField {
-    if (textField == repoField) {
-        [UIView animateWithDuration:0.25 animations:^{
-            self->repoArrowImageView.transform = CGAffineTransformIdentity; // หมุนกลับคืนลงข้างล่างตามเดิมเมื่อยกเลิกการโฟกัส
-        }];
-    }
-}
-
-- (BOOL)textFieldShouldReturn:(UITextField *)textField {
-    if (textField == usernameField) {
-        [tokenField becomeFirstResponder];
-    } else if (textField == tokenField) {
-        [repoField becomeFirstResponder];
-    } else if (textField == repoField) {
-        [branchField becomeFirstResponder];
-    } else if (textField == branchField) {
-        [textField resignFirstResponder]; // ช่องสุดท้ายให้สั่งซ่อนปิดหน้าต่างคีย์บอร์ดลงมาทันที
-    } else {
-        [textField resignFirstResponder];
-    }
-    return YES;
-}
-
 #pragma mark - Data Persistence
 - (void)saveUserData {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -317,7 +210,6 @@
     tokenField.text = [defaults objectForKey:@"native_gh_token"] ?: @"";
     repoField.text = [defaults objectForKey:@"native_gh_repo"] ?: @"";
     branchField.text = [defaults objectForKey:@"native_gh_branch"] ?: @"main";
-    if (usernameField.text.length > 0 && tokenField.text.length > 0) { [self fetchGitHubRepositoriesNative]; }
 }
 
 #pragma mark - Actions
@@ -350,7 +242,7 @@
         long long fileSize = [fileSizeNumber longLongValue];
         double fileSizeInMB = (double)fileSize / (1024 * 1024);
         
-        fileInfoLabel.text = [NSString stringWithFormat:@"ชื่อไฟล์ที่จะอัปโหลด: %@\nขนาดไฟล์: %.2f MB\nระบบกำลังรันผ่าน API Native", selectedFileUrl.lastPathComponent, fileSizeInMB];
+        fileInfoLabel.text = [NSString stringWithFormat:@" ชื่อไฟล์ที่จะอัปโหลด: %@\n ขนาดไฟล์: %.2f MB\n ระบบกำลังรันผ่าน API Native", selectedFileUrl.lastPathComponent, fileSizeInMB];
         
         // เมื่อเลือกเสร็จให้สั่งเริ่มขบวนการสเต็ปการอัปโหลดไป GitHub ทันที
         [self startGitHubUploadProcess];
@@ -361,6 +253,7 @@
 - (void)startGitHubUploadProcess {
     self.loadingIndicator.hidden = NO;
     [uploadButton setEnabled:NO];
+    [arrowButton setEnabled:NO]; // ปิดการใช้งานปุ่ม Arrow ชั่วคราวระหว่างอัปโหลด
     [uploadButton setTitle:@"กำลังตรวจสอบ Repository..." forState:UIControlStateNormal];
     
     NSString *user = usernameField.text;
@@ -501,6 +394,7 @@
                 dispatch_async(dispatch_get_main_queue(), ^{
                     self.loadingIndicator.hidden = YES;
                     [self->uploadButton setEnabled:YES];
+                    [self->arrowButton setEnabled:YES]; // เปิดปุ่มคืนมา
                     [self->uploadButton setTitle:@"อัปโหลดสำเร็จ" forState:UIControlStateNormal];
                     [self showAlert:@"เรียบร้อย!" message:@"ส่งไฟล์ขึ้นเรียบร้อย ระบบดึงโครงสร้างย่อยไปหน้า Root เริ่มทำงานแล้ว"];
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -518,6 +412,7 @@
     dispatch_async(dispatch_get_main_queue(), ^{
         self.loadingIndicator.hidden = YES;
         [self->uploadButton setEnabled:YES];
+        [self->arrowButton setEnabled:YES]; // เปิดปุ่มคืนมาเมื่อล้มเหลว
         [self->uploadButton setTitle:@"เกิดข้อผิดพลาด ลองใหม่อีกครั้ง" forState:UIControlStateNormal];
         [self showAlert:@"อัปโหลดไม่สำเร็จ" message:reason];
     });
@@ -528,6 +423,11 @@
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"ตกลง" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    [textField resignFirstResponder];
+    return YES;
 }
 
 @end
