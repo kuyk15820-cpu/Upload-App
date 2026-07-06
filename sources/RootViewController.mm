@@ -31,7 +31,7 @@
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskPortrait; }
 
 - (void)viewDidLoad {
-    [super __viewDidLoad];
+    [super viewDidLoad];
     self.view.backgroundColor = BG_COLOR;
     
     [self setupWorkflowString];
