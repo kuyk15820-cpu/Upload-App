@@ -10,7 +10,7 @@
 #define TEXT_COLOR [UIColor colorWithRed:201.0/255.0 green:209.0/255.0 blue:217.0/255.0 alpha:1.0]
 #define ACCENT_GREEN [UIColor colorWithRed:35.0/255.0 green:134.0/255.0 blue:54.0/255.0 alpha:1.0]
 
-@interface RootViewController () <UIDocumentPickerDelegate, UITextFieldDelegate> {
+@interface RootViewController () <UIDocumentPickerDelegate, UITextFieldDelegate, UIPickerViewDelegate, UIPickerViewDataSource> {
     UITextField *usernameField;
     UITextField *tokenField;
     UITextField *repoField;
@@ -21,6 +21,9 @@
     NSURL *selectedFileUrl;
     NSString *workflowYamlContent;
     UIImageView *repoArrowImageView; // ตัวแปรสำหรับเก็บป้ายลูกศรหมุนของช่อง Repo
+    
+    UIPickerView *repoPickerView;    // ตัวเลือกหมุนสำหรับรายชื่อ Repo
+    NSMutableArray *repoListArray;   // อาร์เรย์เก็บรายชื่อ Repo ที่ดึงมาจาก GitHub API
 }
 @property (nonatomic, strong) DODoubleHelixIndicator *loadingIndicator;
 @end
@@ -119,22 +122,22 @@
     repoField = [self createTextFieldWithPlaceholder:@"Repository Name" yPos:190 toView:cardView];
     branchField = [self createTextFieldWithPlaceholder:@"Branch (default: main)" yPos:250 toView:cardView];
     
-    // ตั้งค่าเพิ่มรูปไอคอนลูกศรชี้ขวา/ลง ด้านท้ายของช่องกรอกข้อมูล Repo
+    // ตั้งค่าเพิ่มรูปไอคอนลูกศรแบบ chevron.down ด้านท้ายของช่องกรอกข้อมูล Repo
     UIView *rightContainerView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 32, 40)];
     repoArrowImageView = [[UIImageView alloc] initWithFrame:CGRectMake(6, 14, 12, 12)];
     repoArrowImageView.tintColor = [UIColor grayColor];
     
     if (@available(iOS 13.0, *)) {
-        repoArrowImageView.image = [[UIImage systemImageNamed:@"chevron.right"] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+        repoArrowImageView.image = [[UIImage systemImageNamed:@"chevron.down"] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     } else {
-        // Fallback วาดสัญลักษณ์ลูกศรหากรันบนระบบเก่ากว่า iOS 13
+        // Fallback วาดสัญลักษณ์ลูกศรชี้ลงล่างหากรันบนระบบเก่ากว่า iOS 13
         UIGraphicsBeginImageContextWithOptions(CGSizeMake(12, 12), NO, 0.0);
         CGContextRef context = UIGraphicsGetCurrentContext();
         CGContextSetStrokeColorWithColor(context, [UIColor grayColor].CGColor);
         CGContextSetLineWidth(context, 2.0);
-        CGContextMoveToPoint(context, 3, 1);
-        CGContextAddLineToPoint(context, 9, 6);
-        CGContextAddLineToPoint(context, 3, 11);
+        CGContextMoveToPoint(context, 1, 3);
+        CGContextAddLineToPoint(context, 6, 9);
+        CGContextAddLineToPoint(context, 11, 3);
         CGContextStrokePath(context);
         UIImage *arrowImg = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
@@ -144,6 +147,27 @@
     [rightContainerView addSubview:repoArrowImageView];
     repoField.rightView = rightContainerView;
     repoField.rightViewMode = UITextFieldViewModeAlways;
+    
+    // เตรียมระบบ UIPickerView สำหรับแสดงและเลือกรายชื่อคลังข้อมูล
+    repoListArray = [[NSMutableArray alloc] init];
+    repoPickerView = [[UIPickerView alloc] init];
+    repoPickerView.delegate = self;
+    repoPickerView.dataSource = self;
+    
+    // สร้างแถบเครื่องมือปิด/เลือกด้านบน Picker
+    UIToolbar *pickerToolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width, 40)];
+    pickerToolbar.barStyle = UIBarStyleBlack;
+    pickerToolbar.translucent = YES;
+    UIBarButtonItem *doneButton = [[UIBarButtonItem alloc] initWithTitle:@"เลือก" style:UIBarButtonItemStyleDone target:self action:@selector(dismissKeyboardFromView)];
+    UIBarButtonItem *flexibleSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    [pickerToolbar setItems:@[flexibleSpace, doneButton]];
+    
+    repoField.inputView = repoPickerView;
+    repoField.inputAccessoryView = pickerToolbar;
+    
+    // ผูก Action ให้คอยตรวจจับการเปลี่ยนแปลงของ Username/Token เพื่อดึง Repo อัตโนมัติ
+    [usernameField addTarget:self action:@selector(fetchGitHubRepositoriesNative) forControlEvents:UIControlEventEditingChanged];
+    [tokenField addTarget:self action:@selector(fetchGitHubRepositoriesNative) forControlEvents:UIControlEventEditingChanged];
     
     // ช่องแสดงข้อมูลไฟล์ย่อยที่เลือก
     fileInfoLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 310, cardView.frame.size.width - 40, 70)];
@@ -197,12 +221,59 @@
     [self.view addSubview:self.loadingIndicator];
 }
 
+#pragma mark - GitHub Repository Fetcher (ระบบดึงรายชื่อ Repo อัตโนมัติ)
+- (void)fetchGitHubRepositoriesNative {
+    NSString *user = usernameField.text;
+    NSString *token = tokenField.text;
+    if (user.length == 0 || token.length == 0) return;
+    
+    NSString *urlStr = @"https://api.github.com/user/repos?per_page=100&sort=updated";
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
+    [request setValue:[NSString stringWithFormat:@"token %@", token] forHTTPHeaderField:@"Authorization"];
+    [request setValue:@"application/vnd.github.v3+json" forHTTPHeaderField:@"Accept"];
+    
+    [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (data && !error) {
+            NSArray *repos = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            if ([repos isKindOfClass:[NSArray class]]) {
+                [self->repoListArray removeAllObjects];
+                [self->repoListArray addObject:@"< สร้าง Repository ใหม่ >"];
+                for (NSDictionary *repoDict in repos) {
+                    NSString *name = repoDict[@"name"];
+                    if (name) [self->repoListArray addObject:name];
+                }
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self->repoPickerView reloadAllComponents];
+                });
+            }
+        }
+    }] resume];
+}
+
+#pragma mark - UIPickerView DataSource & Delegate
+- (NSInteger)numberOfComponentsInPickerView:(UIPickerView *)pickerView { return 1; }
+- (NSInteger)pickerView:(UIPickerView *)pickerView numberOfRowsInComponent:(NSInteger)component { return repoListArray.count; }
+- (NSString *)pickerView:(UIPickerView *)pickerView titleForRow:(NSInteger)row forComponent:(NSInteger)component { return repoListArray[row]; }
+- (void)pickerView:(UIPickerView *)pickerView didSelectRow:(NSInteger)row inComponent:(NSInteger)component {
+    if (row < repoListArray.count) {
+        NSString *selected = repoListArray[row];
+        if ([selected isEqualToString:@"< สร้าง Repository ใหม่ >"]) {
+            repoField.inputView = nil; // อนุญาตให้แป้นพิมพ์ปกติขึ้นเพื่อพิมพ์สร้างชื่อใหม่
+            repoField.text = @"";
+            [repoField reloadInputViews];
+        } else {
+            repoField.text = selected;
+        }
+    }
+}
+
 #pragma mark - UITextFieldDelegate (การสลับฟิลด์ด้วยรีเทิร์นและการหมุนของ Arrow)
 
 - (void)textFieldDidBeginEditing:(UITextField *)textField {
     if (textField == repoField) {
+        if (repoListArray.count <= 1) { [self fetchGitHubRepositoriesNative]; }
         [UIView animateWithDuration:0.25 animations:^{
-            self->repoArrowImageView.transform = CGAffineTransformMakeRotation(M_PI_2); // หมุนลูกศรลงล่าง 90 ถึง 180 องศาตามสถานะเปิดพิมพ์
+            self->repoArrowImageView.transform = CGAffineTransformMakeRotation(M_PI); // หมุนลูกศรกลับหัวชี้ขึ้นบน 180 องศา (M_PI) เมื่อโฟกัสเปิดตัวเลือก
         }];
     }
 }
@@ -210,7 +281,7 @@
 - (void)textFieldDidEndEditing:(UITextField *)textField {
     if (textField == repoField) {
         [UIView animateWithDuration:0.25 animations:^{
-            self->repoArrowImageView.transform = CGAffineTransformIdentity; // หมุนกลับสู่ค่าเริ่มต้นเมื่อหลุดโฟกัส
+            self->repoArrowImageView.transform = CGAffineTransformIdentity; // หมุนกลับคืนลงข้างล่างตามเดิมเมื่อยกเลิกการโฟกัส
         }];
     }
 }
@@ -246,6 +317,7 @@
     tokenField.text = [defaults objectForKey:@"native_gh_token"] ?: @"";
     repoField.text = [defaults objectForKey:@"native_gh_repo"] ?: @"";
     branchField.text = [defaults objectForKey:@"native_gh_branch"] ?: @"main";
+    if (usernameField.text.length > 0 && tokenField.text.length > 0) { [self fetchGitHubRepositoriesNative]; }
 }
 
 #pragma mark - Actions
